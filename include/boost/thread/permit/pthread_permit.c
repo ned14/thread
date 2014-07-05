@@ -101,7 +101,6 @@ typedef struct pthread_permit_s
   atomic_uint magic;                  /* Used to ensure this structure is valid */
   atomic_uint permit;                 /* =0 no permit, =1 yes permit */
   atomic_uint waiters, waited;        /* Keeps track of when a thread waits and wakes */
-  atomic_uint granters, granted;      /* Keeps track of when granters are running */
   cnd_t cond;                         /* Wakes anything waiting for a permit */
 
   /* Extensions from pthread_permit1_t type */
@@ -116,10 +115,9 @@ static char pthread_permitnc_t_size_check[sizeof(pthread_permitnc_t)==sizeof(pth
 
 static int pthread_permit_init(pthread_permit_t *permit, unsigned magic, unsigned flags, _Bool initial)
 {
-  int ret;
   memset(permit, 0, sizeof(pthread_permit_t));
   permit->permit=initial;
-  if(thrd_success!=(ret=cnd_init(&permit->cond))) return ret;
+  if(thrd_success!=cnd_init(&permit->cond)) return thrd_error;
   permit->replacePermit=(flags&PTHREAD_PERMIT_WAITERS_DONT_CONSUME)!=0;
   atomic_store_explicit(&permit->magic, magic, memory_order_seq_cst);
   return thrd_success;
@@ -164,10 +162,6 @@ static void pthread_permit_destroy(pthread_permit_t *permit)
     permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_DESTROY]->func(PTHREAD_PERMIT_HOOK_TYPE_DESTROY, permit, permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_DESTROY]);
   /* Mark this object as invalid for further use */
   atomic_store_explicit(&permit->magic, 0U, memory_order_seq_cst);
-  // Is anything granting? Need to wait until those exit
-  while(permit->granters!=permit->granted)
-    thrd_yield();
-#if 0
   // If non-consuming, serialise all other grants
   if(permit->replacePermit)
   {
@@ -177,7 +171,6 @@ static void pthread_permit_destroy(pthread_permit_t *permit)
       //if(1==cpus) thrd_yield();
     }
   }
-#endif
   // Is anything waiting? If so repeatedly grant permit and wake until none
   while(permit->waiters!=permit->waited)
   {
@@ -185,10 +178,8 @@ static void pthread_permit_destroy(pthread_permit_t *permit)
     cnd_signal(&permit->cond);
   }
   cnd_destroy(&permit->cond);
-#if 0
   // Unlock
   permit->lockWake=0;
-#endif
 }
 
 static int pthread_permit_grant(pthread_permitX_t _permit)
@@ -196,14 +187,6 @@ static int pthread_permit_grant(pthread_permitX_t _permit)
   pthread_permit_t *permit=(pthread_permit_t *) _permit;
   int ret=thrd_success;
   size_t n;
-  // Increment the monotonic count to indicate we have entered a grant
-  atomic_fetch_add_explicit(&permit->granters, 1U, memory_order_acquire);
-  // Check again if we have been deleted
-  if(!permit->magic)
-  {
-    atomic_fetch_add_explicit(&permit->granted, 1U, memory_order_relaxed);
-    return thrd_error;
-  }
   // If permits aren't consumed, prevent any new waiters or granters
   if(permit->replacePermit)
   {
@@ -217,7 +200,6 @@ static int pthread_permit_grant(pthread_permitX_t _permit)
     if(!permit->magic)
     {
       permit->lockWake=0;
-      atomic_fetch_add_explicit(&permit->granted, 1U, memory_order_relaxed);
       return thrd_error;
     }
   }
@@ -232,8 +214,9 @@ static int pthread_permit_grant(pthread_permitX_t _permit)
     { // Loop waking until nothing is waiting
       do
       {
-        if(thrd_success!=(ret=cnd_broadcast(&permit->cond)))
+        if(thrd_success!=cnd_broadcast(&permit->cond))
         {
+          ret=thrd_error;
           goto exit;
         }
         // Are there select operations on the permit?
@@ -241,21 +224,23 @@ static int pthread_permit_grant(pthread_permitX_t _permit)
         {
           if(permit->selects[n])
           {
-            if(thrd_success!=(ret=cnd_signal(&permit->selects[n]->cond)))
+            if(thrd_success!=cnd_signal(&permit->selects[n]->cond))
             {
+              ret=thrd_error;
               goto exit;
             }
           }
         }
         //if(1==cpus) thrd_yield();
-      } while(atomic_load_explicit(&permit->magic, memory_order_relaxed) && atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed));
+      } while(permit->magic && atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed));
     }
     else
     { // Loop waking until at least one thread takes the permit
-      while(atomic_load_explicit(&permit->magic, memory_order_relaxed) && atomic_load_explicit(&permit->permit, memory_order_relaxed) && atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed))
+      while(permit->magic && atomic_load_explicit(&permit->permit, memory_order_relaxed))
       {
-        if(thrd_success!=(ret=cnd_signal(&permit->cond)))
+        if(thrd_success!=cnd_signal(&permit->cond))
         {
+          ret=thrd_error;
           goto exit;
         }
         // Are there select operations on the permit?
@@ -263,8 +248,9 @@ static int pthread_permit_grant(pthread_permitX_t _permit)
         {
           if(permit->selects[n])
           {
-            if(thrd_success!=(ret=cnd_signal(&permit->selects[n]->cond)))
+            if(thrd_success!=cnd_signal(&permit->selects[n]->cond))
             {
+              ret=thrd_error;
               goto exit;
             }
           }
@@ -277,7 +263,6 @@ exit:
   // If permits aren't consumed, granting has completed, so permit new waiters and granters
   if(permit->replacePermit)
     permit->lockWake=0;
-  atomic_fetch_add_explicit(&permit->granted, 1U, memory_order_relaxed);
   return ret;
 }
 
@@ -314,8 +299,7 @@ static int pthread_permit_wait(pthread_permit_t *permit, pthread_mutex_t *mtx)
   { // Permit is not granted, so wait if we have a mutex
     if(mtx)
     {
-      int _ret;
-      if(thrd_success!=(_ret=cnd_wait(&permit->cond, mtx))) ret=_ret;
+      if(thrd_success!=cnd_wait(&permit->cond, mtx)) ret=thrd_error;
     }
     else thrd_yield();
   }
@@ -359,7 +343,7 @@ static int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *m
     if(mtx)
     {
       int cndret=cnd_timedwait(&permit->cond, mtx, ts);
-      if(thrd_success!=cndret && thrd_timeout!=cndret) { ret=cndret; }
+      if(thrd_success!=cndret && thrd_timeout!=cndret) { ret=cndret; break; }
     }
     else thrd_yield();
   }
@@ -368,15 +352,10 @@ static int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *m
   return ret;
 }
 
-#ifndef VALGRIND_MAKE_MEM_DEFINED
-#define VALGRIND_MAKE_MEM_DEFINED(a, l)
-#endif
-
 // Specialise the above with their extern type safe APIs
 #define PERMIT_IMPL(permittype) \
 PTHREAD_PERMIT_API_DEFINE(int, permittype##_init, (pthread_##permittype##_t *permit, _Bool initial)) \
 { \
-  VALGRIND_MAKE_MEM_DEFINED(&permit->magic, sizeof(permit->magic)); \
   if(PERMIT_MAGIC==((pthread_permit_t *) permit)->magic) return thrd_busy; \
   return pthread_permit_init((pthread_permit_t *) permit, PERMIT_MAGIC, PERMIT_FLAGS, initial); \
 } \
@@ -454,6 +433,7 @@ static int pthread_permit_select_int(size_t no, pthread_permit_t **PTHREAD_PERMI
       if(PERMIT_CONSUMING_PERMIT_MAGIC!=permits[n]->magic && PERMIT_NONCONSUMING_PERMIT_MAGIC!=permits[n]->magic)
       {
         permits[n]=0;
+        if(thrd_success!=ret) ret=thrd_error;
       }
       if(permits[n]->replacePermit) replacePermits++;
       totalpermits++;
