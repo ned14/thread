@@ -37,8 +37,8 @@
 #define PTHREAD_PERMIT_USE_BOOST
 #define PTHREAD_PERMIT_CXX_NAMESPACE_BEGIN namespace boost { namespace c_permit {
 #define PTHREAD_PERMIT_CXX_NAMESPACE_END } }
+#define PTHREAD_PERMIT_APIEXPORT BOOST_THREAD_DECL
 #define PTHREAD_PERMIT_MANGLEAPI(api) pthread_##api
-#define PTHREAD_PERMIT_HEADER_ONLY 1
 #include "../permit/pthread_permit.h"
 
 #include <boost/config/abi_prefix.hpp>
@@ -49,29 +49,30 @@ namespace boost
     {
         template<bool consuming> struct permit_impl_selector
         {          
-            typedef boost::c_permit::pthread_permit1_t pthread_permit_t;
-            static  int pthread_permit_init     (pthread_permit_t *permit, bool initial)                                    { return boost::c_permit::pthread_permit1_init     (permit, initial); }
-            static void pthread_permit_destroy  (pthread_permit_t *permit)                                                  {        boost::c_permit::pthread_permit1_destroy  (permit); }
-            static  int pthread_permit_grant    (pthread_permit_t *permit)                                                  { return boost::c_permit::pthread_permit1_grant    (permit); }
-            static void pthread_permit_revoke   (pthread_permit_t *permit)                                                  {        boost::c_permit::pthread_permit1_revoke   (permit); }
-            static  int pthread_permit_wait     (pthread_permit_t *permit, pthread_mutex_t *mtx)                            { return boost::c_permit::pthread_permit1_wait     (permit, mtx); }
-            static  int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts) { return boost::c_permit::pthread_permit1_timedwait(permit, mtx, ts); }
+            using namespace boost::c_permit;
+            typedef pthread_permit1_t pthread_permit_t;
+            static  int pthread_permit_init     (pthread_permit_t *permit, _Bool initial)                                   { return pthread_permit1_init     (permit, initial); }
+            static void pthread_permit_destroy  (pthread_permit_t *permit)                                                  {        pthread_permit1_destroy  (permit); }
+            static  int pthread_permit_grant    (pthread_permit_t *permit)                                                  { return pthread_permit1_grant    (permit); }
+            static void pthread_permit_revoke   (pthread_permit_t *permit)                                                  {        pthread_permit1_revoke   (permit); }
+            static  int pthread_permit_wait     (pthread_permit_t *permit, pthread_mutex_t *mtx)                            { return pthread_permit1_wait     (permit, mtx); }
+            static  int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts) { return pthread_permit1_timedwait(permit, mtx, ts); }
         };
         template<> struct permit_impl_selector<true>
         {          
-            typedef boost::c_permit::pthread_permitnc_t pthread_permit_t;
-            static  int pthread_permit_init     (pthread_permit_t *permit, bool initial)                                    { return boost::c_permit::pthread_permitnc_init     (permit, initial); }
-            static void pthread_permit_destroy  (pthread_permit_t *permit)                                                  {        boost::c_permit::pthread_permitnc_destroy  (permit); }
-            static  int pthread_permit_grant    (pthread_permit_t *permit)                                                  { return boost::c_permit::pthread_permitnc_grant    (permit); }
-            static void pthread_permit_revoke   (pthread_permit_t *permit)                                                  {        boost::c_permit::pthread_permitnc_revoke   (permit); }
-            static  int pthread_permit_wait     (pthread_permit_t *permit, pthread_mutex_t *mtx)                            { return boost::c_permit::pthread_permitnc_wait     (permit, mtx); }
-            static  int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts) { return boost::c_permit::pthread_permitnc_timedwait(permit, mtx, ts); }
+            using namespace boost::c_permit;
+            typedef pthread_permitnc_t pthread_permit_t;
+            static  int pthread_permit_init     (pthread_permit_t *permit, _Bool initial)                                   { return pthread_permitnc_init     (permit, initial); }
+            static void pthread_permit_destroy  (pthread_permit_t *permit)                                                  {        pthread_permitnc_destroy  (permit); }
+            static  int pthread_permit_grant    (pthread_permit_t *permit)                                                  { return pthread_permitnc_grant    (permit); }
+            static void pthread_permit_revoke   (pthread_permit_t *permit)                                                  {        pthread_permitnc_revoke   (permit); }
+            static  int pthread_permit_wait     (pthread_permit_t *permit, pthread_mutex_t *mtx)                            { return pthread_permitnc_wait     (permit, mtx); }
+            static  int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts) { return pthread_permitnc_timedwait(permit, mtx, ts); }
         };
     }
 
     template<bool consuming=true> class permit : private detail::permit_impl_selector<consuming>
     {
-      typedef typename detail::permit_impl_selector<consuming>::pthread_permit_t pthread_permit_t;
     private:
 #if defined BOOST_THREAD_PROVIDES_INTERRUPTIONS
         pthread_mutex_t internal_mutex;
@@ -280,9 +281,6 @@ namespace boost
         void grant() BOOST_NOEXCEPT;
         void revoke() BOOST_NOEXCEPT;
 
-        void notify_one() BOOST_NOEXCEPT { grant(); }
-        void notify_all() BOOST_NOEXCEPT { grant(); }
-        
 #ifdef BOOST_THREAD_USES_CHRONO
         inline cv_status wait_until(
             unique_lock<mutex>& lk,
@@ -332,7 +330,7 @@ namespace boost
         };
     }
 
-    template<bool consuming> inline void permit<consuming>::wait(unique_lock<mutex>& m)
+    inline void permit::wait(unique_lock<mutex>& m)
     {
 #if defined BOOST_THREAD_THROW_IF_PRECONDITION_NOT_SATISFIED
         if(! m.owns_lock())
@@ -366,7 +364,7 @@ namespace boost
         }
     }
 
-    template<bool consuming> inline bool permit<consuming>::do_wait_until(
+    inline bool permit::do_wait_until(
                 unique_lock<mutex>& m,
                 struct timespec const &timeout)
     {
@@ -403,7 +401,7 @@ namespace boost
         return true;
     }
 
-    template<bool consuming> inline void permit<consuming>::grant() BOOST_NOEXCEPT
+    inline void permit::grant() BOOST_NOEXCEPT
     {
 #if defined BOOST_THREAD_PROVIDES_INTERRUPTIONS
         boost::pthread::pthread_mutex_scoped_lock internal_lock(&internal_mutex);
@@ -411,7 +409,7 @@ namespace boost
         BOOST_VERIFY(!pthread_permit_grant(&perm));
     }
 
-    template<bool consuming> inline void permit<consuming>::revoke() BOOST_NOEXCEPT
+    inline void permit::revoke() BOOST_NOEXCEPT
     {
 #if defined BOOST_THREAD_PROVIDES_INTERRUPTIONS
         boost::pthread::pthread_mutex_scoped_lock internal_lock(&internal_mutex);
@@ -421,9 +419,8 @@ namespace boost
 
     template<bool consuming=true> class permit_any : private detail::permit_impl_selector<consuming>
     {
-        typedef typename detail::permit_impl_selector<consuming>::pthread_permit_t pthread_permit_t;
         pthread_mutex_t internal_mutex;
-        pthread_permit_t perm;
+        pthread_permit_t cond;
 
     public:
         BOOST_THREAD_NO_COPYABLE(permit_any)
@@ -653,11 +650,6 @@ namespace boost
 
 
     };
-    
-    typedef permit<true> permit_c;
-    typedef permit_any<true> permit_any_c;
-    typedef permit<false> permit_nc;
-    typedef permit_any<false> permit_any_nc;
 
 }
 

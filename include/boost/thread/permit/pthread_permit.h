@@ -49,12 +49,6 @@ DEALINGS IN THE SOFTWARE.
 #include <assert.h>
 #endif // DOXYGEN_PREPROCESSOR
 
-#ifdef PTHREAD_PERMIT_HEADER_ONLY
-#ifndef PTHREAD_PERMIT_APIEXPORT
-#define PTHREAD_PERMIT_APIEXPORT inline
-#endif
-#endif
-
 #if !defined(PTHREAD_PERMIT_APIEXPORT) && defined(_USRDLL)
 #ifdef _WIN32
 #define PTHREAD_PERMIT_APIEXPORT extern __declspec(dllexport)
@@ -668,10 +662,6 @@ struct pthread_permitnc_s
 
 #ifdef __cplusplus
 PTHREAD_PERMIT_CXX_NAMESPACE_END
-#endif
-
-#ifdef PTHREAD_PERMIT_HEADER_ONLY
-#include "pthread_permit.c"
 #endif
 
 #endif
