@@ -632,8 +632,7 @@ static pthread_permitnc_association_t pthread_permit_associate_winhandle_np(pthr
   {
     char buffer=0;
     DWORD written=0;
-    if(!WriteFile(h, &buffer, 1, &written, NULL) && ERROR_IO_PENDING!=GetLastError())
-      return 0;
+    WriteFile(h, &buffer, 1, &written, NULL);
   }
   return ret;
 }
@@ -677,7 +676,9 @@ static pthread_permitnc_association_t pthread_permit_associate_winevent_np(pthre
   }
   if(permit->permit)
   {
-    if(!SetEvent(h)) return 0;
+    char buffer=0;
+    DWORD written=0;
+    WriteFile(h, &buffer, 1, &written, NULL);
   }
   return ret;
 }
