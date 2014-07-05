@@ -33,10 +33,8 @@ DEALINGS IN THE SOFTWARE.
 //#define _GLIBCXX_ATOMIC_BUILTINS_4 // Without this tries to use std::exception_ptr which Mingw can't handle
 #endif
 
-#ifndef PTHREAD_PERMIT_DISABLE_CATCH
 #define CATCH_CONFIG_RUNNER
 #include "catch.hpp"
-#endif
 #include <bitset>
 #include <thread>
 
@@ -676,7 +674,7 @@ TEST_CASE("pthread_permit/fdmirroring", "Tests that file descriptor mirroring wo
 }
 
 
-#ifndef PTHREAD_PERMIT_DISABLE_CATCH
+
 int main(int argc, char *argv[])
 {
 #ifdef _OPENMP
@@ -687,4 +685,3 @@ int main(int argc, char *argv[])
   int result=Catch::Session().run(argc, argv);
   return result;
 }
-#endif
